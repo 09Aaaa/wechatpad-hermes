@@ -478,6 +478,9 @@ def main() -> None:
             bridge_sync.wechat.request = fake_request  # type: ignore[method-assign]
             bridge_sync.poll_once()
             assert_true(bridge_sync.store.get_runtime_value("wechatpad_synckey") == "sync-key-buffer", "bridge should persist sync key after polling")
+            assert_true(int(bridge_sync.store.get_runtime_value("last_poll_at") or "0") > 0, "bridge should persist a safe poll heartbeat")
+            assert_true(bridge_sync.store.get_runtime_value("last_poll_message_count") == "0", "bridge heartbeat should include message count")
+            assert_true(bridge_sync.store.get_runtime_value("last_poll_handled_count") == "0", "bridge heartbeat should include handled count")
             restored_bridge = Bridge(settings)
             try:
                 assert_true(restored_bridge.wechat.get_synckey() == "sync-key-buffer", "bridge should restore sync key from runtime state on startup")

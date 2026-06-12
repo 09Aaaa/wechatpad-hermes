@@ -79,6 +79,10 @@ class Bridge:
         for message in messages:
             if self.handle_message(message):
                 handled += 1
+        now = int(time.time())
+        self.store.set_runtime_value("last_poll_at", str(now))
+        self.store.set_runtime_value("last_poll_message_count", str(len(messages)))
+        self.store.set_runtime_value("last_poll_handled_count", str(handled))
         return handled
 
     def handle_message(self, message: ChatMessage) -> bool:

@@ -63,6 +63,10 @@ def _recent_ignored(store: MessageStore, limit: int) -> list[dict[str, Any]]:
     ]
 
 
+def _runtime_value(store: MessageStore, key: str) -> str:
+    return store.get_runtime_value(key)
+
+
 def build_ops_status(limit: int = 10) -> dict[str, Any]:
     settings = load_settings()
     privacy = PrivacyFilter()
@@ -101,8 +105,13 @@ def build_ops_status(limit: int = 10) -> dict[str, Any]:
     store = MessageStore(settings.db_path, privacy=privacy, fingerprint_key=settings.wechatpad_authcode or settings.wechatpad_admin_key)
     try:
         stats = store.runtime_stats()
+        last_poll_at = int(_runtime_value(store, "last_poll_at") or 0)
         stats["latest_message_age_seconds"] = _age_seconds(int(stats.get("latest_message_received_at") or 0))
         stats["latest_reply_age_seconds"] = _age_seconds(int(stats.get("latest_reply_created_at") or 0))
+        stats["last_poll_at"] = last_poll_at
+        stats["last_poll_age_seconds"] = _age_seconds(last_poll_at)
+        stats["last_poll_message_count"] = int(_runtime_value(store, "last_poll_message_count") or 0)
+        stats["last_poll_handled_count"] = int(_runtime_value(store, "last_poll_handled_count") or 0)
         data["runtime_stats"] = stats
         data["recent_replies"] = _recent_replies(store, limit)
         data["recent_ignored"] = _recent_ignored(store, limit)
