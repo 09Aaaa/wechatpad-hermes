@@ -74,6 +74,15 @@ class Policy:
         if not self.allow_all_groups and chatroom not in self.allowed_group_chatrooms:
             return self._deny(message, "group_chatroom_not_allowed")
         if self.require_mention and not self.is_mentioned(message):
+            if self._contains_url(message.content):
+                return RouteDecision(
+                    should_respond=True,
+                    reason="group_link_analysis",
+                    conversation_id="wechat:group",
+                    target_wxid=chatroom,
+                    context_since_ts=self._context_since_ts(),
+                    role="group",
+                )
             return self._deny(message, "group_message_without_bot_mention")
         return RouteDecision(
             should_respond=True,
@@ -99,6 +108,12 @@ class Policy:
 
     def _context_since_ts(self) -> int:
         return int(time.time()) - max(self.history_days, 0) * 86400
+
+    def _contains_url(self, text: str) -> bool:
+        """Check if message contains a URL that should trigger link analysis."""
+        if not text:
+            return False
+        return bool(re.search(r"https?://[^\s]+", text))
 
     def _deny(self, message: ChatMessage, reason: str) -> RouteDecision:
         # Normal group chatter is retained as same-group context. Blocked,
