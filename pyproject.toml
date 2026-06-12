@@ -1,0 +1,20 @@
+[project]
+name = "wechatpad-hermes"
+version = "0.1.0"
+description = "Safe WeChatPadProMAX bridge and MCP tools for Hermes."
+requires-python = ">=3.10"
+dependencies = [
+  "mcp>=1.12.4",
+  "PyYAML>=6.0.0",
+]
+
+[project.scripts]
+wechatpad-hermes-bridge = "wechatpad_hermes.bridge:main"
+wechatpad-hermes-doctor = "wechatpad_hermes.doctor:main"
+wechatpad-hermes-mcp = "wechatpad_hermes.mcp_server:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

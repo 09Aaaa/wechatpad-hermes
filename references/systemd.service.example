@@ -1,0 +1,16 @@
+[Unit]
+Description=WeChatPadProMAX Hermes bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/hermes/data/skills/lvwan/wechatpad-hermes
+EnvironmentFile=/opt/hermes/data/.env
+ExecStartPre=/opt/hermes/data/skills/lvwan/wechatpad-hermes/.venv/bin/python -m wechatpad_hermes.doctor --strict --require-public-safe
+ExecStart=/opt/hermes/data/skills/lvwan/wechatpad-hermes/.venv/bin/python -m wechatpad_hermes.bridge
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

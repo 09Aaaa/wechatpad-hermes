@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "wechatpad-hermes": {
+      "command": "/mnt/user/appdata/wechatpad-hermes/releases/<release>/hermes-wechatpadpromax/.venv/bin/python",
+      "args": ["-m", "wechatpad_hermes.mcp_server"],
+      "env": {
+        "PYTHONPATH": "/mnt/user/appdata/wechatpad-hermes/releases/<release>/hermes-wechatpadpromax/src",
+        "WECHATPAD_ENV_FILE": "/mnt/user/appdata/wechatpad-hermes/data/.env",
+        "WECHATPAD_DB_PATH": "/mnt/user/appdata/wechatpad-hermes/data/wechatpad-hermes.sqlite3",
+        "WECHATPAD_POLICY_PATH": "/mnt/user/appdata/wechatpad-hermes/data/policy.yaml",
+        "WECHATPAD_CONTEXT_TOKEN_TTL_SECONDS": "1800",
+        "WECHATPAD_DRY_RUN": "true",
+        "WECHATPAD_SEND_ENABLED": "false",
+        "WECHATPAD_ADMIN_TOOLS_ENABLED": "false",
+        "WECHATPAD_ALLOW_UNKNOWN_OUTBOUND": "false",
+        "WECHATPAD_STORE_RAW_MESSAGES": "false"
+      }
+    }
+  }
+}

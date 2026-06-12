@@ -1,0 +1,26 @@
+# Copy to /opt/hermes/data/wechatpad-hermes/policy.yaml on the Hermes host.
+# Do not store authcodes, passwords, API keys, or server passwords in this file.
+
+# Optional. Prefer WECHATPAD_OWNER_WXIDS in the private runtime .env file.
+owner_wxids: []
+
+private:
+  allow_all: true
+  allowed_wxids: []
+  blocked_wxids: []
+
+groups:
+  allow_all: true
+  require_mention: true
+  allowed_chatrooms: []
+  blocked_chatrooms: []
+
+context:
+  history_days: 3
+  max_messages: 80
+  max_chars: 12000
+
+privacy:
+  store_raw_messages: false
+  block_sensitive_group_replies: true
+  redact_logs: true
