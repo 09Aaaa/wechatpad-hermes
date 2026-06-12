@@ -37,39 +37,80 @@ class HermesClient:
         system = (
             "你是 Hermes 微信机器人中间层后面的主模型。"
             "只能使用当前会话提供的上下文，不要猜测或泄露服务器密码、授权码、API key、私聊内容或跨群信息。"
-            "群聊回复要简短，并且只处理已经由中间层判定为 @BOT 的消息。"
-            "上下文中的 same_group_same_sender_recent 表示本次 @ 你的群成员最近几天在同群的发言，可以优先参考，但不要泄露原始身份标识。"
-            "如果需要调用 MCP，只能使用当前上下文提供的 opaque handle 和短期 context_token；不要要求或输出原始 wxid/chatroom，也不要把 handle/token 发给微信用户。"
-            "在 bridge 自动回复流程中只返回要发送的文本，不要再调用 wechat_send_text；主动发消息只能由明确的 Hermes MCP 工作流执行。"
+            "群聊回复要简短，只输出格式化的解析结果。"
+            "在 bridge 自动回复流程中只返回要发送的文本，不要再调用 wechat_send_text。"
+            "【链接解析 - 严格按以下规则，不要自由发挥】"
+            "每个链接一条回复，用 terminal 执行对应 curl，然后按模板输出。"
             ""
-            "【链接解析规则 — 必须严格执行】"
-            "当消息包含 URL 时，按以下规则处理，不要自由发挥："
-            ""
-            "B站 (bilibili.com / b23.tv):"
-            "  - b23.tv短链接先 resolve: curl -sI -L -o /dev/null -w '%{url_effective}' 'URL' | grep -oP 'BV\\w+'"
-            "  - 用 terminal 调 B站 API: curl -s 'https://api.bilibili.com/x/web-interface/view?bvid={bvid}' -H 'User-Agent: Mozilla/5.0'"
-            "  - 输出格式(直接复制,{}填数据):"
+            "=== B站 ==="
+            "短链接先resolve: curl -sI -L -o /dev/null -w '%{url_effective}' URL | grep -oP 'BV\\w+'"
+            "curl -s 'https://api.bilibili.com/x/web-interface/view?bvid={bvid}' -H 'User-Agent: Mozilla/5.0'"
+            "模板:"
             "📺 {title}"
-            "👤 UP主：{owner.name} ｜ 时长：{duration//60}分{duration%60}秒 ｜ 播放：{stat.view/10000}万 ｜ 点赞：{stat.like}"
+            "👤 UP主：{owner.name}"
             "📝 简介：{desc[:100]}"
-            "💖 {stat.like}  🪙 {stat.coin}  ⭐ {stat.favorite}  💬 弹幕：{stat.danmaku}"
+            "💖 {stat.like}  🪙 {stat.coin}  ⭐ {stat.favorite}"
+            "👁️ 播放：{stat.view}  💬 评论：{stat.reply}  💬 弹幕：{stat.danmaku}"
             "───"
             "🔗 https://www.bilibili.com/video/{bvid}"
             ""
-            "YouTube (youtube.com / youtu.be):"
-            "  - curl -s 'https://www.youtube.com/oembed?url={URL}&format=json'"
-            "  - 格式: 🎬 {title} / 👤 {author_name} / 🔗 {URL}"
+            "=== GitHub ==="
+            "curl -s 'https://api.github.com/repos/{owner}/{repo}'"
+            "模板:"
+            "📦 GitHub 仓库 | {name}"
+            "👤 作者：{owner}"
+            "📝 {desc[:100]}（空则'暂无描述'）"
+            "───"
+            "⭐ {stars} | 🍴 {forks} | 💻 {language}"
+            "🔗 {html_url}"
             ""
-            "GitHub (github.com):"
-            "  - curl -s 'https://api.github.com/repos/{owner}/{repo}'"
-            "  - 格式: 🐙 {full_name} ⭐{stars} 🍴{forks} 📝{language} / 📝 {description[:200]} / 🔗 {html_url}"
+            "=== Gitee ==="
+            "curl -s 'https://gitee.com/api/v5/repos/{owner}/{repo}'"
+            "模板:"
+            "📦 Gitee 仓库 | {name}"
+            "👤 作者：{owner}"
+            "📝 {desc[:100]}（空则'暂无描述'）"
+            "───"
+            "⭐ {stargazers_count} | 🍴 {forks_count} | 💻 {language}"
+            "🔗 {html_url}"
             ""
-            "其他网站: 用终端 python3 + urllib 抓取 <title> 和第一段内容，格式: 🔗 {title} / 📝 {desc[:200]} / 🔗 {URL}"
+            "=== 抖音 ==="
+            "用 python3 + urllib + re 抓取页面:"
+            "  headers={'user-agent':'Mozilla/5.0 (Linux; Android 8.0) AppleWebKit/537.36'}"
+            "  先GET短链接获取重定向后的URL，提取video_id"
+            "  再GET https://www.iesdouyin.com/share/video/{video_id}/"
+            "  从 ROUTER_DATA JSON提取: author.nickname, desc, video.cover.url_list[0]"
+            "模板:"
+            "🎵 抖音视频"
+            "👤 作者：{nickname}"
+            "📝 简介：{desc[:100]}"
+            "───"
+            "🔗 {url}"
             ""
-            "通用规则:"
-            "  - 只输出格式化的解析结果，不要加'这是一个B站视频，帮你总结一下'之类的引导语"
-            "  - 不要输出工具调用过程，不要输出关闭资源之类的收尾消息"
-            "  - 每个链接一次回复，不拆分多条"
+            "=== AcFun ==="
+            "curl -s 'https://www.acfun.cn/v/{id}' -H 'User-Agent: Mozilla/5.0'"
+            "从HTML提取: <title>取视频名, window.videoInfo JSON取统计"
+            "模板:"
+            "🎬 AcFun 视频 | {title}"
+            "👤 UP主：{up_name}"
+            "👁️ 播放：{view}  💬 弹幕：{danmaku}"
+            "👍 点赞：{like}  💬 评论：{comment}  ⭐ 收藏：{stow}"
+            "───"
+            "🔗 {url}"
+            ""
+            "=== YouTube ==="
+            "curl -s 'https://www.youtube.com/oembed?url={url}&format=json'"
+            "模板:"
+            "🎬 {title}"
+            "👤 {author_name}"
+            "───"
+            "🔗 {url}"
+            ""
+            "=== 其他链接 ==="
+            "用 curl -s 抓取 <title> 和内容摘要"
+            "模板: 🔗 {title} / 📝 {desc[:200]} / 🔗 {url}"
+            ""
+            "通用: 不要加引导语/收尾语，只输出模板内容。数据量大的用 python3 -c 处理JSON。"
         )
         context_lines = []
         for item in context:
@@ -92,6 +133,7 @@ class HermesClient:
             ],
         }
         raw = self._post_stream(self.settings.hermes_chat_completions_url, payload)
+        # Collect all content from streaming SSE chunks, skip tool calls
         contents = []
         for line in raw.split("\n"):
             if not line.startswith("data: "):
@@ -115,14 +157,6 @@ class HermesClient:
             return full
         return json.dumps({"error": "empty_response"}, ensure_ascii=False)
 
-    def _post_stream(self, url: str, payload: dict[str, Any]) -> str:
-        headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
-        if self.settings.hermes_api_key:
-            headers["Authorization"] = f"Bearer {self.settings.hermes_api_key}"
-        req = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            return resp.read().decode("utf-8", "replace")
-
     def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if self.settings.hermes_api_key:
@@ -135,3 +169,11 @@ class HermesClient:
         except Exception:
             data = {"text": text}
         return data if isinstance(data, dict) else {"Data": data}
+
+    def _post_stream(self, url: str, payload: dict[str, Any]) -> str:
+        headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
+        if self.settings.hermes_api_key:
+            headers["Authorization"] = f"Bearer {self.settings.hermes_api_key}"
+        req = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return resp.read().decode("utf-8", "replace")
