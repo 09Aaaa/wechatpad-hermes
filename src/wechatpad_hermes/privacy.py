@@ -245,13 +245,16 @@ class PrivacyFilter:
     def _redact_data(self, data: Any, hits: list[str], *, parent_key: str) -> Any:
         if isinstance(data, dict):
             clean: dict[str, Any] = {}
+            redacted_secret_fields = 0
             for key, value in data.items():
                 key_text = str(key)
                 if _is_sensitive_field_name(key_text):
                     hits.append("secret_field")
-                    clean[key_text] = "[SECRET_FIELD_REDACTED]"
+                    redacted_secret_fields += 1
                 else:
                     clean[key_text] = self._redact_data(value, hits, parent_key=key_text)
+            if redacted_secret_fields:
+                clean["_redacted_secret_field_count"] = redacted_secret_fields
             return clean
         if isinstance(data, list):
             return [self._redact_data(item, hits, parent_key=parent_key) for item in data]
