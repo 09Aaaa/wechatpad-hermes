@@ -1,4 +1,5 @@
 from __future__ import annotations
+import time
 
 import argparse
 import json
@@ -34,6 +35,10 @@ class Bridge:
         saved_synckey = self.store.get_runtime_value("wechatpad_synckey")
         if saved_synckey:
             self.wechat.set_synckey(saved_synckey)
+        self._started_at = int(time.time())
+        saved_start = self.store.get_runtime_value("bridge_started_at")
+        if not saved_start:
+            self.store.set_runtime_value("bridge_started_at", str(self._started_at))
 
     def stop(self, *_args: Any) -> None:
         self.running = False
@@ -86,6 +91,10 @@ class Bridge:
         return handled
 
     def handle_message(self, message: ChatMessage) -> bool:
+        if self._started_at and message.create_time:
+            if message.create_time < self._started_at - 7200:
+                self.log("message chat=historical reason=historical_before_bridge")
+                return True
         decision = self.policy.decide(message)
         if decision.store_message:
             inserted = self.store.add_message(message)
