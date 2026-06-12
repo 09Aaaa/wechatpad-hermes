@@ -53,7 +53,8 @@ def _wechat() -> WeChatPadClient:
 
 
 def _redacted_json(data: Any) -> str:
-    return _privacy().redact(_json(data)).text
+    clean, _hits = _privacy().redact_data(data)
+    return _privacy().redact(_json(clean)).text
 
 
 def _resolve_chat(handle: str, context_token: str) -> tuple[dict[str, Any] | None, str | None]:

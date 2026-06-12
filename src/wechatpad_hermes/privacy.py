@@ -2,6 +2,161 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
+
+
+SENSITIVE_FIELD_NAMES = {
+    "aeskey",
+    "autoauthkey",
+    "clientsessionkey",
+    "cooike",
+    "cookie",
+    "curdecryptseqiv",
+    "curencryptseqiv",
+    "decrypt_part2_hash256",
+    "decrypt_part3_hash256",
+    "decrypt_part4_hash256",
+    "decryptmmtlsapplicationiv",
+    "decryptmmtlsapplicationkey",
+    "decryptmmtlsiv",
+    "decryptmmtlskey",
+    "decrptshortmmtlsiv",
+    "decrptshortmmtlskey",
+    "deviceid_byte",
+    "deviceid_str",
+    "devicetoken",
+    "earlydatapart",
+    "encrptmmtlsapplicationiv",
+    "encrptmmtlsapplicationkey",
+    "encrptmmtlsiv",
+    "encrptmmtlskey",
+    "encrptshortmmtlsiv",
+    "encrptshortmmtlskey",
+    "hkdexpand_application_key",
+    "hkdexpand_clientfinish_key",
+    "hkdexpand_secret_key",
+    "hkdfexpand_application_key",
+    "hkdfexpand_clientfinish_key",
+    "hkdfexpand_pskaccess_key",
+    "hkdfexpand_pskrefresh_key",
+    "hkdfexpand_secret_key",
+    "hkdfexpand_serverfinish_key",
+    "hkdfexpand_info_serverfinish_key",
+    "hybridecdhinitserverpubkey",
+    "hybridecdhprivkey",
+    "hybridecdhpubkey",
+    "login_data",
+    "logindata",
+    "loginecdhkey",
+    "loginrsaver",
+    "mmtlskey",
+    "newpassword",
+    "newsendbufferhashs",
+    "notifykey",
+    "pass",
+    "password",
+    "passwd",
+    "proxy",
+    "proxypassword",
+    "pskiv",
+    "pskkey",
+    "pwd",
+    "rsaprivatekey",
+    "rsapublickey",
+    "serversessionkey",
+    "sessionkey",
+    "sessionkey_2",
+    "shakehandecdhkey",
+    "shakehandecdhkeyhash",
+    "shakehandprikey",
+    "shakehandprikey_2",
+    "shakehandpubkey",
+    "shakehandpubkey_2",
+    "sync_key",
+    "synckey",
+    "ticket",
+    "token",
+    "uuid",
+}
+
+
+SENSITIVE_FIELD_SUBSTRINGS = (
+    "authkey",
+    "authorization",
+    "cookie",
+    "ecdh",
+    "encrypt",
+    "encrpt",
+    "decrypt",
+    "decrpt",
+    "hkdf",
+    "key",
+    "loginrsa",
+    "mmtls",
+    "newpass",
+    "password",
+    "passwd",
+    "prikey",
+    "privatekey",
+    "proxy",
+    "pwd",
+    "secret",
+    "session",
+    "shakehand",
+    "ticket",
+    "token",
+)
+
+
+FIELD_REDACTION_ALLOWLIST = {
+    "admin_key_configured",
+    "api_key_configured",
+    "clientversion",
+    "contentlength",
+    "context_token_ttl_seconds",
+    "codevalue",
+    "db_known_messages",
+    "db_known_replies",
+    "debug",
+    "deviceinfo",
+    "devicename",
+    "devicetype",
+    "email",
+    "enable_service",
+    "enableservice",
+    "hermes_api_key_configured",
+    "headurl",
+    "history_days",
+    "id",
+    "login_date",
+    "logindate",
+    "loginmode",
+    "mars_host",
+    "marshost",
+    "max_context_chars",
+    "max_context_messages",
+    "message",
+    "mmtlshost",
+    "mmtlsip",
+    "mobile",
+    "nickname",
+    "online",
+    "online_secs",
+    "onlinesecs",
+    "online_since",
+    "onlinesince",
+    "osversion",
+    "poll_interval",
+    "retention_days",
+    "rommodel",
+    "active_context_token_count",
+    "wechatpad_context_token_ttl_seconds",
+    "wechatpad_admin_key_configured",
+    "success",
+    "uin",
+    "username",
+    "wxid",
+}
 
 
 SENSITIVE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
@@ -82,6 +237,30 @@ class PrivacyResult:
 
 
 class PrivacyFilter:
+    def redact_data(self, data: Any) -> tuple[Any, list[str]]:
+        hits: list[str] = []
+        clean = self._redact_data(data, hits, parent_key="")
+        return clean, sorted(set(hits))
+
+    def _redact_data(self, data: Any, hits: list[str], *, parent_key: str) -> Any:
+        if isinstance(data, dict):
+            clean: dict[str, Any] = {}
+            for key, value in data.items():
+                key_text = str(key)
+                if _is_sensitive_field_name(key_text):
+                    hits.append("secret_field")
+                    clean[key_text] = "[SECRET_FIELD_REDACTED]"
+                else:
+                    clean[key_text] = self._redact_data(value, hits, parent_key=key_text)
+            return clean
+        if isinstance(data, list):
+            return [self._redact_data(item, hits, parent_key=parent_key) for item in data]
+        if data is None or isinstance(data, (bool, int, float)):
+            return data
+        result = self.redact(data)
+        hits.extend(result.hits)
+        return result.text
+
     def redact(self, text: object) -> PrivacyResult:
         value = "" if text is None else str(text)
         hits: list[str] = []
@@ -114,3 +293,18 @@ class PrivacyFilter:
 def mask_secret(value: str, keep_start: int = 8, keep_end: int = 4) -> str:
     value = str(value or "")
     return "[SECRET_CONFIGURED]" if value else ""
+
+
+def _normalize_field_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.lower())
+
+
+def _is_sensitive_field_name(value: str) -> bool:
+    normalized = _normalize_field_name(value)
+    allowlist = {_normalize_field_name(item) for item in FIELD_REDACTION_ALLOWLIST}
+    sensitive_names = {_normalize_field_name(item) for item in SENSITIVE_FIELD_NAMES}
+    if not normalized or normalized in allowlist:
+        return False
+    if normalized in sensitive_names:
+        return True
+    return any(part in normalized for part in SENSITIVE_FIELD_SUBSTRINGS)

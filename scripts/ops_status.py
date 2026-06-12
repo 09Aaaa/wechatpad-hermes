@@ -116,7 +116,8 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=10, help="Recent reply/ignored rows to summarize")
     args = parser.parse_args()
     privacy = PrivacyFilter()
-    print(privacy.redact(json.dumps(build_ops_status(args.limit), ensure_ascii=False, indent=2)).text)
+    safe_data, _hits = privacy.redact_data(build_ops_status(args.limit))
+    print(privacy.redact(json.dumps(safe_data, ensure_ascii=False, indent=2)).text)
 
 
 if __name__ == "__main__":

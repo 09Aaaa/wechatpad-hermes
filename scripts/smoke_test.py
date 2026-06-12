@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import sys
 import time
 import uuid
@@ -121,6 +122,33 @@ def main() -> None:
         policy = Policy(settings)
         privacy = PrivacyFilter()
         assert_true(mask_secret(sample_authcode()) == "[SECRET_CONFIGURED]", "secret masks should not reveal stable prefixes or suffixes")
+        cache_payload = {
+            "Code": 1,
+            "Success": True,
+            "Data": {
+                "Wxid": owner_admin_wxid,
+                "NickName": "BOT",
+                "online": True,
+                "Pwd": "extdevnewpwd_sensitive",
+                "Aeskey": "base64-sensitive",
+                "Sessionkey": "session-sensitive",
+                "Autoauthkey": "autoauth-sensitive",
+                "RsaPrivateKey": "rsa-private-sensitive",
+                "MmtlsKey": {"Shakehandprikey": "shakehand-sensitive"},
+                "Mobile": "13800138000",
+            },
+        }
+        safe_cache, cache_hits = privacy.redact_data(cache_payload)
+        safe_cache_text = json.dumps(safe_cache, ensure_ascii=False)
+        assert_true("secret_field" in cache_hits, "structured cache redaction should report sensitive fields")
+        assert_true("extdevnewpwd_sensitive" not in safe_cache_text, "structured redaction should remove cache passwords")
+        assert_true("base64-sensitive" not in safe_cache_text, "structured redaction should remove cache aes keys")
+        assert_true("session-sensitive" not in safe_cache_text, "structured redaction should remove session keys")
+        assert_true("autoauth-sensitive" not in safe_cache_text, "structured redaction should remove autoauth keys")
+        assert_true("rsa-private-sensitive" not in safe_cache_text, "structured redaction should remove private keys")
+        assert_true("shakehand-sensitive" not in safe_cache_text, "structured redaction should remove nested mmtls keys")
+        assert_true("[WXID_REDACTED]" in privacy.redact(safe_cache_text).text, "structured redaction should still allow string-level wxid redaction")
+        assert_true(safe_cache["Success"] is True and safe_cache["Data"]["online"] is True, "structured redaction should preserve safe booleans")
         store = MessageStore(settings.db_path, privacy=privacy)
         now = int(time.time())
 
@@ -414,7 +442,8 @@ def main() -> None:
         assert_true("AUTHCODE_REDACTED" in owner_online_result, "owner online output should redact authcodes")
         assert_true(owner_admin_wxid not in owner_online_result, "owner online output should redact raw wxids")
         owner_cache_result = mcp_server.wechat_get_cache_info(owner_handle, owner_token)
-        assert_true("AUTHCODE_REDACTED" in owner_cache_result, "owner cache output should redact cache authcodes")
+        assert_true("SECRET_FIELD_REDACTED" in owner_cache_result, "owner cache output should redact secret cache fields")
+        assert_true(sample_authcode() not in owner_cache_result, "owner cache output should not expose cache authcodes")
         assert_true(owner_admin_wxid not in owner_cache_result, "owner cache output should redact raw wxids")
         owner_admin_result = mcp_server.wechat_get_all_online(owner_handle, owner_token)
         assert_true("AUTHCODE_REDACTED" in owner_admin_result, "owner admin output should redact authcodes")

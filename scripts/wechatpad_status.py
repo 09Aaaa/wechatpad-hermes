@@ -24,7 +24,8 @@ def main() -> None:
     }
     if settings.admin_tools_enabled and settings.wechatpad_admin_key:
         data["all_online"] = client.get_all_online()
-    print(privacy.redact(json.dumps(data, ensure_ascii=False, indent=2)).text)
+    safe_data, _hits = privacy.redact_data(data)
+    print(privacy.redact(json.dumps(safe_data, ensure_ascii=False, indent=2)).text)
 
 
 if __name__ == "__main__":

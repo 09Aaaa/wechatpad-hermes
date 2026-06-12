@@ -190,7 +190,8 @@ def main() -> None:
     settings = load_settings()
     privacy = PrivacyFilter()
     report = build_report(settings, strict=args.strict, live=args.live, require_public_safe=args.require_public_safe)
-    print(privacy.redact(json.dumps(report, ensure_ascii=False, indent=2)).text)
+    safe_report, _hits = privacy.redact_data(report)
+    print(privacy.redact(json.dumps(safe_report, ensure_ascii=False, indent=2)).text)
 
     has_error = any(issue["level"] == "error" for issue in report["issues"])
     raise SystemExit(1 if has_error else 0)
