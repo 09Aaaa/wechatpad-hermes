@@ -41,6 +41,9 @@ class HermesClient:
             "上下文中的 same_group_same_sender_recent 表示本次 @ 你的群成员最近几天在同群的发言，可以优先参考，但不要泄露原始身份标识。"
             "如果需要调用 MCP，只能使用当前上下文提供的 opaque handle 和短期 context_token；不要要求或输出原始 wxid/chatroom，也不要把 handle/token 发给微信用户。"
             "在 bridge 自动回复流程中只返回要发送的文本，不要再调用 wechat_send_text；主动发消息只能由明确的 Hermes MCP 工作流执行。"
+            "重要规则："
+            "1. 每次请求只输出一条回复消息。不要输出工具调用过程中的状态描述、资源释放、关闭会话之类的收尾消息。"
+            "2. 如果消息中包含链接，请自动抓取并分析后再回复。回复控制在800字以内。"
         )
         context_lines = []
         for item in context:
@@ -52,6 +55,8 @@ class HermesClient:
             context_lines.append(f"[{scope}][{item.get('create_time')}] {sender}: {content}")
         payload = {
             "model": self.settings.hermes_model or "default",
+            "stream": True,
+            "stream_options": {"include_usage": True},
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "system", "content": f"conversation_id={conversation_id}; source_role={role}"},
@@ -60,13 +65,37 @@ class HermesClient:
                 {"role": "user", "content": user_text},
             ],
         }
-        data = self._post_json(self.settings.hermes_chat_completions_url, payload)
-        choices = data.get("choices") if isinstance(data, dict) else None
-        if choices and isinstance(choices[0], dict):
-            message = choices[0].get("message") or {}
-            if isinstance(message, dict) and isinstance(message.get("content"), str):
-                return message["content"]
-        return json.dumps(data, ensure_ascii=False)
+        raw = self._post_stream(self.settings.hermes_chat_completions_url, payload)
+        contents = []
+        for line in raw.split("\n"):
+            if not line.startswith("data: "):
+                continue
+            data_str = line[6:].strip()
+            if data_str == "[DONE]":
+                continue
+            try:
+                chunk = json.loads(data_str)
+                choices = chunk.get("choices")
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                content = delta.get("content")
+                if content:
+                    contents.append(content)
+            except (json.JSONDecodeError, KeyError, IndexError):
+                continue
+        full = "".join(contents).strip()
+        if full:
+            return full
+        return json.dumps({"error": "empty_response"}, ensure_ascii=False)
+
+    def _post_stream(self, url: str, payload: dict[str, Any]) -> str:
+        headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
+        if self.settings.hermes_api_key:
+            headers["Authorization"] = f"Bearer {self.settings.hermes_api_key}"
+        req = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return resp.read().decode("utf-8", "replace")
 
     def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
