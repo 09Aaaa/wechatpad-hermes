@@ -1,11 +1,11 @@
 [project]
 name = "wechatpad-hermes"
-version = "0.1.0"
+version = "0.2.0"
 description = "Safe WeChatPadProMAX bridge and MCP tools for Hermes."
 requires-python = ">=3.10"
 dependencies = [
-  "mcp>=1.12.4",
-  "PyYAML>=6.0.0",
+  "mcp>=1.12.4,<2.0",
+  "PyYAML>=6.0.0,<7.0",
 ]
 
 [project.scripts]

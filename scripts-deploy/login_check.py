@@ -7,7 +7,7 @@ authcode = ""
 env_path = "/mnt/user/appdata/wechatpad-hermes/data/.env"
 with open(env_path) as f:
     for line in f:
-        if line.startswith("WECHATPAD_AUTHCODE=***
+        if line.startswith("WECHATPAD_AUTHCODE="):
             authcode = line.split("=", 1)[1].strip().strip('"').strip("'")
             break
 
@@ -15,10 +15,14 @@ if not authcode:
     print("STATUS=NO_AUTHCODE")
     exit()
 
-# 2. Call HeartBeat
-url = f"http://your_nas_ip:8062/api/Login/HeartBeat?authcode={authcode}"
+# 2. Call HeartBeat — authcode in POST body, NOT in URL query string
+url = "http://your_nas_ip:8062/api/Login/HeartBeat"
+payload = json.dumps({"authcode": authcode}).encode()
 try:
-    req = urllib.request.Request(url, method="POST", data=b"{}", headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        url, method="POST", data=payload,
+        headers={"Content-Type": "application/json"}
+    )
     resp = urllib.request.urlopen(req, timeout=10)
     body = json.loads(resp.read())
     code = body.get("Code", -99)

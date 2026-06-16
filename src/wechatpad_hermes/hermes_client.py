@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import urllib.request
 from typing import Any
 
@@ -193,4 +194,7 @@ class HermesClient:
                         break
                 return "".join(chunks)
         except urllib.error.URLError as e:
-            return json.dumps({"error": str(e)}, ensure_ascii=False)
+            msg = str(e)
+            # Sanitize any credentials that might leak in error messages
+            msg = re.sub(r'(?i)Bearer\s+[A-Za-z0-9._~+/=-]{12,}', '[BEARER_TOKEN_REDACTED]', msg)
+            return json.dumps({"error": msg}, ensure_ascii=False)

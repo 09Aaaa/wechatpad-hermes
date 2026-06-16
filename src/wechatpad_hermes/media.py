@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import re
+import socket
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -13,6 +15,23 @@ MEDIA_CACHE_DIR = Path("/tmp/wechatpad-hermes-media")
 _MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*\]\((https?://[^\s)]+)\)", re.IGNORECASE)
 _MEDIA_LINE_RE = re.compile(r"(?m)^\s*MEDIA:(/[^\r\n]+)\s*$")
 _LOCAL_IMAGE_LINE_RE = re.compile(r"(?m)^\s*(/[^\r\n]+\.(?:jpe?g|png|gif|webp))\s*$", re.IGNORECASE)
+
+# SSRF guard: only http/https, no private/reserved IPs
+_ALLOWED_SCHEMES = frozenset({"http", "https"})
+_NON_GLOBAL_NETWORKS = [
+    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("100.64.0.0/10"),    # Carrier-grade NAT
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),   # Link-local
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.0.0.0/24"),     # IETF protocol assignments
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("198.18.0.0/15"),    # Benchmarking
+    ipaddress.ip_network("224.0.0.0/4"),      # Multicast
+    ipaddress.ip_network("240.0.0.0/4"),      # Reserved
+    ipaddress.ip_network("255.255.255.255/32"),
+]
 
 
 def extract_reply_media(text: str, *, max_images: int = MAX_REPLY_IMAGES) -> tuple[str, list[str]]:
@@ -55,6 +74,7 @@ def extract_reply_media(text: str, *, max_images: int = MAX_REPLY_IMAGES) -> tup
 def prepare_image_reference(reference: str) -> str:
     """Return a local image path suitable for WeChatPadProMAX send-image APIs."""
     if reference.startswith(("http://", "https://")):
+        _validate_download_url(reference)
         return str(_download_image(reference))
     return reference
 
@@ -90,3 +110,55 @@ def _is_supported_image_reference(value: str) -> bool:
     if value.startswith("/"):
         return Path(value).suffix.lower() in IMAGE_EXTENSIONS
     return False
+
+
+def _validate_download_url(url: str) -> None:
+    """SSRF guard: reject URLs pointing to private/reserved networks.
+
+    Only http/https schemes allowed. Hostnames are resolved and checked.
+    """
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in _ALLOWED_SCHEMES:
+        raise ValueError(f"URL scheme not allowed: {parsed.scheme!r}")
+
+    host = parsed.hostname or ""
+    if not host:
+        raise ValueError("URL has no hostname")
+
+    # If the hostname is already a bare IP, check it directly
+    try:
+        addr = ipaddress.ip_address(host)
+        _check_ip(addr)
+        return
+    except ValueError:
+        pass  # hostname is a domain name — resolve below
+
+    # Resolve to IPs and check each one
+    try:
+        addrinfo = socket.getaddrinfo(host, 80)
+    except socket.gaierror as exc:
+        raise ValueError(f"Cannot resolve hostname: {host} ({exc})")
+
+    seen = set()
+    for family, _, _, _, sockaddr in addrinfo:
+        ip_str = sockaddr[0]
+        if ip_str in seen:
+            continue
+        seen.add(ip_str)
+        try:
+            addr = ipaddress.ip_address(ip_str)
+            _check_ip(addr)
+        except ValueError as e:
+            raise ValueError(f"Blocked resolved IP {ip_str} for {host}: {e}")
+
+
+def _check_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> None:
+    """Raise ValueError if addr is in a non-global range."""
+    if isinstance(addr, ipaddress.IPv6Address):
+        # Allow only global unicast IPv6
+        if not addr.is_global:
+            raise ValueError(f"Non-global IPv6 address: {addr}")
+        return
+    for net in _NON_GLOBAL_NETWORKS:
+        if addr in net:
+            raise ValueError(f"Address in non-global range {net}: {addr}")

@@ -18,6 +18,13 @@ from .storage import MessageStore
 from .wechatpad_client import WeChatPadClient
 
 
+# Simple per-chat rate limiter — skip repeated messages within the cooldown
+_RATE_LIMIT_COOLDOWN = 1.5     # seconds: no two messages from the same chat
+_RATE_LIMIT_BURST    = 3.0     # seconds: burst window for repeated same-text messages
+_last_message: dict[str, tuple[float, str]] = {}
+_last_reply_time: dict[str, float] = {}
+
+
 class Bridge:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -149,10 +156,34 @@ class Bridge:
         return handled
 
     def handle_message(self, message: ChatMessage) -> bool:
+        # -- Rate limiting --------------------------------------------------
+        global _last_message, _last_reply_time
+        chat_id = message.chat_id
+        now_mono = time.monotonic()
+        content_snippet = (message.content or "")[:200]
+
+        # Cooldown: skip if we replied to this chat recently
+        if chat_id in _last_reply_time:
+            elapsed = now_mono - _last_reply_time[chat_id]
+            if elapsed < _RATE_LIMIT_COOLDOWN:
+                self.log(f"rate_limited chat={chat_id[:16]} cooldown={elapsed:.1f}s")
+                return False
+
+        # Dedup: skip duplicate content within burst window
+        if chat_id in _last_message:
+            ts, prev = _last_message[chat_id]
+            if content_snippet and content_snippet == prev and (now_mono - ts) < _RATE_LIMIT_BURST:
+                self.log(f"rate_limited chat={chat_id[:16]} dedup burst_window={now_mono - ts:.1f}s")
+                return False
+        _last_message[chat_id] = (now_mono, content_snippet)
+
+        # -- History gate ---------------------------------------------------
         if self._started_at and message.create_time:
             if message.create_time < self._started_at - 7200:
                 self.log("message chat=historical reason=historical_before_bridge")
                 return True
+
+        # -- Policy decision ------------------------------------------------
         decision = self.policy.decide(message)
         if decision.store_message:
             inserted = self.store.add_message(message)
@@ -230,6 +261,9 @@ class Bridge:
         self.store.add_reply(message.dedupe_key, message.chat_id, decision.target_wxid, message.is_group, safe_reply, status, json.dumps({"text": send_result, "images": image_statuses}, ensure_ascii=False)[:500])
         target_handle = chat_handle if message.is_group else self.store.ensure_chat_handle(decision.target_wxid, False)
         self.log(f"reply {status} chat={chat_handle or 'unknown_chat'} to={target_handle or 'unknown_chat'} len={len(text_reply)} images={len(image_refs)} image_statuses={image_statuses}")
+
+        # Track reply time for rate limiter
+        _last_reply_time[chat_id] = time.monotonic()
         return True
 
     def build_context(self, message: ChatMessage, since_ts: int) -> list[dict[str, Any]]:
