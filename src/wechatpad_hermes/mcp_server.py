@@ -8,6 +8,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from .config import Settings, load_settings
+from .media import prepare_image_reference
 from .policy import Policy
 from .privacy import PrivacyFilter
 from .storage import MessageStore
@@ -205,6 +206,43 @@ def wechat_send_text(target_handle: str, context_token: str, content: str) -> st
     if not send_result.get("Success", send_result.get("Code") == 0):
         status = "send_failed"
     _record_mcp_send_attempt(to_wxid, is_group, safe_content, status, _redacted_json(send_result)[:500])
+    return _redacted_json(send_result)
+
+
+@mcp.tool()
+def wechat_send_image(target_handle: str, context_token: str, image_path_or_url: str, caption: str = "") -> str:
+    """Send one image to an opaque target_handle using a local image path or supported image URL. Optional caption is sent as text first."""
+    chat, error = _resolve_chat(target_handle, context_token)
+    if error:
+        try:
+            reason = json.loads(error).get("error", "context_token_error")
+        except Exception:
+            reason = "context_token_error"
+        return _json({"sent": False, "blocked": True, "reason": reason})
+    assert chat is not None
+    to_wxid = str(chat["chat_id"])
+    is_group = bool(chat["is_group"])
+    if not _settings().allow_unknown_outbound and not _store().has_chat(to_wxid):
+        _record_mcp_send_attempt(to_wxid, is_group, image_path_or_url, "blocked", "stale_context_handle")
+        return _json({"sent": False, "blocked": True, "reason": "stale_context_handle"})
+    if caption.strip():
+        text_result = wechat_send_text(target_handle, context_token, caption)
+        try:
+            parsed_text = json.loads(text_result)
+            if parsed_text.get("blocked") or not parsed_text.get("Success", parsed_text.get("Code") == 0):
+                return text_result
+        except Exception:
+            pass
+    try:
+        prepared_ref = prepare_image_reference(image_path_or_url)
+        send_result = _wechat().send_image(to_wxid, prepared_ref)
+    except Exception as exc:
+        _record_mcp_send_attempt(to_wxid, is_group, "[image]", "send_failed", type(exc).__name__)
+        return _json({"sent": False, "error": type(exc).__name__})
+    status = "dry_run" if _settings().dry_run or not _settings().send_enabled else "sent"
+    if not send_result.get("Success", send_result.get("Code") == 0):
+        status = "send_failed"
+    _record_mcp_send_attempt(to_wxid, is_group, "[image]", status, _redacted_json(send_result)[:500])
     return _redacted_json(send_result)
 
 

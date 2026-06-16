@@ -35,7 +35,7 @@ class HermesClient:
                 context_token = str(item.get("context_token") or "")
                 break
         system = (
-            "你是 Hermes 微信机器人中间层后面的主模型。"
+            "你是 Hermes 微信机器人。"
             "只能使用当前会话提供的上下文，不要猜测或泄露服务器密码、授权码、API key、私聊内容或跨群信息。"
             "群聊回复要简短，只输出格式化的解析结果。"
             "在 bridge 自动回复流程中只返回要发送的文本，不要再调用 wechat_send_text。"
@@ -85,7 +85,8 @@ class HermesClient:
             "👤 作者：{nickname}"
             "📝 简介：{desc[:100]}"
             "───"
-            "🔗 {url}"
+            "🔗 播放链接：{video_play_url}"
+            "🔗 原链接：{douyin_url}"
             ""
             "=== AcFun ==="
             "curl -s 'https://www.acfun.cn/v/{id}' -H 'User-Agent: Mozilla/5.0'"
@@ -96,7 +97,8 @@ class HermesClient:
             "👁️ 播放：{view}  💬 弹幕：{danmaku}"
             "👍 点赞：{like}  💬 评论：{comment}  ⭐ 收藏：{stow}"
             "───"
-            "🔗 {url}"
+            "🔗 播放链接：{video_play_url}"
+            "🔗 原链接：{douyin_url}"
             ""
             "=== YouTube ==="
             "curl -s 'https://www.youtube.com/oembed?url={url}&format=json'"
@@ -104,7 +106,8 @@ class HermesClient:
             "🎬 {title}"
             "👤 {author_name}"
             "───"
-            "🔗 {url}"
+            "🔗 播放链接：{video_play_url}"
+            "🔗 原链接：{douyin_url}"
             ""
             "=== 其他链接 ==="
             "用 curl -s 抓取 <title> 和内容摘要"
@@ -171,9 +174,23 @@ class HermesClient:
         return data if isinstance(data, dict) else {"Data": data}
 
     def _post_stream(self, url: str, payload: dict[str, Any]) -> str:
+        import http.client
         headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
         if self.settings.hermes_api_key:
             headers["Authorization"] = f"Bearer {self.settings.hermes_api_key}"
         req = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            return resp.read().decode("utf-8", "replace")
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                chunks = []
+                while True:
+                    try:
+                        line = resp.readline()
+                        if not line:
+                            break
+                        chunks.append(line.decode("utf-8", "replace"))
+                    except http.client.IncompleteRead as e:
+                        chunks.append(e.partial.decode("utf-8", "replace"))
+                        break
+                return "".join(chunks)
+        except urllib.error.URLError as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)

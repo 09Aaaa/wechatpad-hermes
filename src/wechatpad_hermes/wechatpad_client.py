@@ -4,6 +4,8 @@ import json
 import urllib.parse
 import urllib.error
 import urllib.request
+import base64
+import pathlib
 from typing import Any
 
 from .config import Settings
@@ -77,6 +79,51 @@ class WeChatPadClient:
         if not self.settings.send_enabled or self.settings.dry_run:
             return {"Code": 0, "Success": True, "Message": "dry-run: not sent", "Data": {"Target": "redacted", "ContentLength": len(content)}}
         return self.request("POST", "/Msg/SendTxt", body={"ToWxid": to_wxid, "Content": content, "At": at, "Type": 1})
+
+    def send_image(self, to_wxid: str, image_path_or_url: str) -> dict[str, Any]:
+        if not self.settings.send_enabled or self.settings.dry_run:
+            return {
+                "Code": 0,
+                "Success": True,
+                "Message": "dry-run: image not sent",
+                "Data": {"Target": "redacted", "ImageLength": len(image_path_or_url)},
+            }
+        # Read local file and convert to base64
+        path = pathlib.Path(image_path_or_url)
+        if not path.exists() or not path.is_file():
+            return {"Code": -1, "Success": False, "Message": f"Image file not found: {image_path_or_url}"}
+        data = path.read_bytes()
+        if len(data) > 12 * 1024 * 1024:
+            return {"Code": -1, "Success": False, "Message": "Image exceeds 12MiB limit"}
+        b64 = base64.b64encode(data).decode("ascii")
+        payload = {
+            "ToWxid": to_wxid,
+            "Base64": b64,
+        }
+        return self.request("POST", "/Msg/UploadImg", body=payload, timeout=120)
+
+    def set_webhook(
+        self,
+        url: str,
+        enabled: bool = True,
+        secret: str = "",
+        message_types: list[str] | None = None,
+        timeout: int = 5,
+        retry_count: int = 3,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "url": url,
+            "enabled": enabled,
+            "includeSelfMessage": False,
+            "messageTypes": message_types or ["*"],
+            "timeout": timeout,
+            "retryCount": retry_count,
+        }
+        if secret:
+            body["secret"] = secret
+        return self.request("POST", "/Webhook/Set", body=body)
+
+
 
     def get_online_info(self, authcode: str | None = None) -> dict[str, Any]:
         return self.request("GET", "/User/GetOnlineInfo", authcode=authcode)

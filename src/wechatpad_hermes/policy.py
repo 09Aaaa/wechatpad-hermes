@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+import hashlib
 from .config import Settings, load_yaml
 from .messages import ChatMessage
 
@@ -35,6 +36,8 @@ class Policy:
         self.blocked_wxids = set(settings.blocked_wxids) | set(_as_list(private.get("blocked_wxids")))
         self.blocked_chatrooms = set(settings.blocked_group_chatrooms) | set(_as_list(groups.get("blocked_chatrooms")))
         self.require_mention = bool(groups.get("require_mention", True))
+        self._link_dedup: dict[str, float] = {}  # hash -> ts
+        self._link_dedup_window = 300  # seconds
         self.history_days = int(context.get("history_days", settings.history_days))
         self.max_messages = int(context.get("max_messages", settings.max_context_messages))
         self.max_chars = int(context.get("max_chars", settings.max_context_chars))
@@ -50,8 +53,35 @@ class Policy:
             return self._deny(message, "ignore_bot_group_self_message")
         if message.sender_wxid and message.sender_wxid in self.blocked_wxids:
             return self._deny(message, "blocked_group_sender")
+        if message.content.startswith("请使用 link-analyzer 技能解析这个链接："):
+            return self._decide_link(message)
         if message.is_group:
             return self._decide_group(message)
+        return self._decide_private(message)
+
+    def _decide_link(self, message: ChatMessage) -> RouteDecision:
+        if message.from_wxid in self.blocked_wxids:
+            return self._deny(message, "blocked_private_sender")
+        if self.settings.bot_wxid and message.from_wxid == self.settings.bot_wxid:
+            return self._deny(message, "ignore_bot_self_message")
+        if self.settings.bot_wxid and message.sender_wxid == self.settings.bot_wxid:
+            return self._deny(message, "ignore_bot_group_self_message")
+        if message.sender_wxid and message.sender_wxid in self.blocked_wxids:
+            return self._deny(message, "blocked_group_sender")
+        if message.is_group:
+            chatroom = message.chat_id
+            if chatroom in self.blocked_chatrooms:
+                return self._deny(message, "group_chatroom_blocked")
+            if not self.allow_all_groups and chatroom not in self.allowed_group_chatrooms:
+                return self._deny(message, "group_chatroom_not_allowed")
+            return RouteDecision(
+                should_respond=True,
+                reason="group_link_auto_analyze",
+                conversation_id=f"wechat:group:{chatroom}",
+                target_wxid=chatroom,
+                context_since_ts=self._context_since_ts(),
+                role="group",
+            )
         return self._decide_private(message)
 
     def _decide_private(self, message: ChatMessage) -> RouteDecision:
@@ -75,6 +105,8 @@ class Policy:
             return self._deny(message, "group_chatroom_not_allowed")
         if self.require_mention and not self.is_mentioned(message):
             if self._contains_url(message.content):
+                if self._is_link_dedup(chatroom, message.content):
+                    return self._deny(message, "group_link_dedup_skipped")
                 return RouteDecision(
                     should_respond=True,
                     reason="group_link_analysis",
@@ -115,6 +147,24 @@ class Policy:
             return False
         return bool(re.search(r"https?://[^\s]+", text))
 
+
+    def _is_link_dedup(self, chatroom: str, content: str) -> bool:
+        """Return True if this chatroom+URL combo was seen within the dedup window."""
+        now = time.time()
+        # Extract URL from content
+        m = re.search(r"https?://[^\s]+", content or "")
+        url = m.group(0) if m else content[:80]
+        key = hashlib.md5(f"{chatroom}:{url}".encode()).hexdigest()[:16]
+        last = self._link_dedup.get(key, 0)
+        # Cleanup old entries periodically
+        if len(self._link_dedup) > 200:
+            cutoff = now - self._link_dedup_window * 2
+            self._link_dedup = {k: v for k, v in self._link_dedup.items() if v > cutoff}
+        if now - last < self._link_dedup_window:
+            return True
+        self._link_dedup[key] = now
+        return False
+
     def _deny(self, message: ChatMessage, reason: str) -> RouteDecision:
         # Normal group chatter is retained as same-group context. Blocked,
         # non-text, disallowed, and BOT-self messages are not context material.
@@ -131,8 +181,16 @@ def _as_list(value: Any) -> list[str]:
 
 
 def _contains_name_mention(content: str, name: str) -> bool:
-    escaped = re.escape(name.strip())
+    cleaned_name = name.strip()
+    escaped = re.escape(cleaned_name)
     if not escaped:
         return False
-    pattern = re.compile(rf"(?<![A-Za-z0-9_@＠])[@＠]\s*{escaped}(?![A-Za-z0-9_-])", re.I)
-    return bool(pattern.search(content or ""))
+    text = content or ""
+    # WeChat @ mentions may use NBSP / figure space / narrow NBSP / ideographic spaces.
+    mention_gap = r"[\s\u00a0\u2000-\u200b\u202f\u205f\u3000]*"
+    pattern = re.compile(rf"(?<![A-Za-z0-9_@＠])[@＠]{mention_gap}{escaped}(?![A-Za-z0-9_-])", re.I)
+    if pattern.search(text):
+        return True
+    # Allow owner-friendly shorthand at the beginning: `BOT xxx` / `机器人 xxx`.
+    shorthand = re.compile(rf"^\s*{escaped}(?=$|[\s:：,，。!！?？])", re.I)
+    return bool(shorthand.search(text))

@@ -172,7 +172,7 @@ SENSITIVE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         "api_key",
         re.compile(
             r"(?i)(?:\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|token|secret|authorization)\b|授权码|密钥|令牌|管理密钥|后台密钥)"
-            r"(?:\s*(?:[:=：]|是|为)\s*|\s+)(?:Bearer\s+)?[A-Za-z0-9._~+/=-]{6,}"
+            r"\s*(?:[:=：])\s*(?:Bearer\s+)?(?!\*{3}\b)[A-Za-z0-9._~+/=-]{8,}"
         ),
     ),
     ("bearer_token", re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b")),
@@ -195,13 +195,10 @@ GROUP_LEAK_PHRASES = [
     "私密",
     "服务器密码",
     "授权码",
-    "api key",
-    "token",
     "context_token",
     "chat_handle",
     "participant_handle",
     "密码是",
-    "后台",
     "wxid_",
     "@chatroom",
     "@openim",
@@ -215,13 +212,10 @@ PRIVATE_LEAK_PHRASES = [
     "私密",
     "服务器密码",
     "授权码",
-    "api key",
-    "token",
     "context_token",
     "chat_handle",
     "participant_handle",
     "密码是",
-    "后台",
     "wxid_",
     "@chatroom",
     "@openim",

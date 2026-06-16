@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import html
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -33,6 +35,101 @@ def nested_str(value: Any) -> str:
     if value is None:
         return ""
     return str(value)
+
+
+LINK_MESSAGE_TYPES = {49, 51}
+URL_RE = re.compile(r"https?://[^\s<>'\"]+", re.I)
+
+
+def extract_quoted_text(raw, content, msg_type):
+    """Extract plain text from quoted/reply messages."""
+    if msg_type not in {1, 49, 57}:
+        return ""
+    if not content:
+        return ""
+    stripped = content.strip()
+    if not stripped.startswith(("<msg>", "<xml>", "<appmsg", "<")):
+        return ""
+    title = _extract_xml_tag(stripped, "title")
+    des = _extract_xml_tag(stripped, "des")
+    quoted_content = ""
+    quoted_match = re.search(r"<refermsg>.*?<content><!\[CDATA\[(.*?)\]\]></content>.*?</refermsg>", stripped, re.S)
+    if quoted_match:
+        quoted_content = _clean_xml_text(quoted_match.group(1))
+    parts = []
+    if title:
+        parts.append(_clean_xml_text(title))
+    if des and des != title:
+        parts.append(_clean_xml_text(des))
+    if quoted_content and quoted_content not in " ".join(parts):
+        parts.append("[引用: " + quoted_content + "]")
+    if parts:
+        return "\n".join(parts)
+    return ""
+
+def extract_link_text(raw: dict[str, Any], content: str, msg_type: int) -> str:
+    """Return a plain-text URL payload for WeChat appmsg/link cards."""
+    if msg_type not in LINK_MESSAGE_TYPES:
+        return ""
+    haystack_parts = [content]
+    for key in ("Url", "url", "Link", "link", "AppMsg", "appmsg", "Xml", "xml"):
+        value = nested_str(raw.get(key))
+        if value:
+            haystack_parts.append(value)
+    haystack = "\n".join(haystack_parts)
+    url = _extract_url_from_xmlish(haystack) or _extract_url_by_regex(haystack)
+    if not url:
+        return ""
+    title = _extract_xml_tag(haystack, "title") or _extract_xml_tag(haystack, "des")
+    title = _clean_xml_text(title)[:120]
+    if title:
+        return f"请使用 link-analyzer 技能解析这个链接：{url}\n标题：{title}"
+    return f"请使用 link-analyzer 技能解析这个链接：{url}"
+
+
+def _extract_url_from_xmlish(text: str) -> str:
+    if not text:
+        return ""
+    raw = html.unescape(text)
+    for tag in ("url", "pagepath"):
+        val = _extract_xml_tag(raw, tag)
+        found = _extract_url_by_regex(val)
+        if found:
+            return found
+    try:
+        root = ET.fromstring(raw.strip())
+        for tag in ("url", "pagepath"):
+            node = root.find(f".//{tag}")
+            if node is not None and node.text:
+                found = _extract_url_by_regex(html.unescape(node.text))
+                if found:
+                    return found
+    except Exception:
+        pass
+    return ""
+
+
+def _extract_xml_tag(text: str, tag: str) -> str:
+    if not text:
+        return ""
+    m = re.search(rf"<{tag}[^>]*>(.*?)</{tag}>", text, re.I | re.S)
+    return _clean_xml_text(m.group(1)) if m else ""
+
+
+def _extract_url_by_regex(text: str) -> str:
+    if not text:
+        return ""
+    m = URL_RE.search(html.unescape(text))
+    if not m:
+        return ""
+    return m.group(0).rstrip(").,;，。；、]>\"")
+
+
+def _clean_xml_text(text: str) -> str:
+    if not text:
+        return ""
+    text = re.sub(r"^<!\[CDATA\[(.*)\]\]>$", r"\1", text.strip(), flags=re.S)
+    return html.unescape(text).strip()
 
 
 @dataclass(frozen=True)
@@ -79,6 +176,15 @@ def parse_message(raw: dict[str, Any], bot_wxid: str = "") -> ChatMessage | None
     sender_wxid = ""
     if is_group:
         sender_wxid, content = extract_group_sender(raw, content, chat_id=chat_id, bot_wxid=bot_wxid)
+    link_text = extract_link_text(raw, content, msg_type)
+    if link_text:
+        content = link_text
+        msg_type = 1
+    elif msg_type in {1, 49, 57}:
+        quoted_text = extract_quoted_text(raw, content, msg_type)
+        if quoted_text:
+            content = quoted_text
+            msg_type = 1
     return ChatMessage(
         msg_id=str(raw.get("MsgId") or raw.get("msg_id") or ""),
         new_msg_id=str(raw.get("NewMsgId") or raw.get("new_msg_id") or ""),

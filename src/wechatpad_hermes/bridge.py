@@ -10,6 +10,7 @@ from typing import Any
 
 from .config import Settings, load_settings
 from .hermes_client import HermesClient
+from .media import extract_reply_media, prepare_image_reference
 from .messages import ChatMessage, extract_messages
 from .policy import Policy
 from .privacy import PrivacyFilter, mask_secret
@@ -44,9 +45,11 @@ class Bridge:
         self.running = False
 
     def run_forever(self) -> None:
+        mode = "webhook+poll" if self.settings.webhook_enabled else "poll"
         self.log(
-            "bridge started: base_url=%s db=%s dry_run=%s send_enabled=%s authcode=%s"
+            "bridge started: mode=%s base_url=%s db=%s dry_run=%s send_enabled=%s authcode=%s"
             % (
+                mode,
                 self.settings.wechatpad_base_url,
                 self.settings.db_path,
                 self.settings.dry_run,
@@ -54,6 +57,13 @@ class Bridge:
                 mask_secret(self.settings.wechatpad_authcode),
             )
         )
+
+        # Start webhook server if enabled
+        webhook_server = None
+        if self.settings.webhook_enabled:
+            webhook_server = self._start_webhook()
+
+        # Polling loop (always runs as fallback, or as primary if webhook disabled)
         last_cleanup = 0
         while self.running:
             try:
@@ -70,9 +80,57 @@ class Bridge:
             except Exception as exc:
                 self.error_count += 1
                 self.log(f"poll error: {type(exc).__name__}: {exc}")
-            time.sleep(self._sleep_seconds())
+            # Slower polling when webhook is primary (webhook handles real-time, poll is fallback)
+            sleep_time = self._sleep_seconds()
+            if self.settings.webhook_enabled:
+                sleep_time = max(sleep_time, 10.0)  # Slow poll as fallback
+            time.sleep(sleep_time)
+
+        if webhook_server:
+            webhook_server.stop()
         self.store.close()
         self.log("bridge stopped")
+
+    def _start_webhook(self):
+        """Start webhook server and register URL with WeChatPadPro."""
+        from .webhook_server import WebhookServer
+
+        port = self.settings.webhook_port
+        secret = self.settings.webhook_secret
+        host = self.settings.webhook_host
+
+        server = WebhookServer(
+            port=port,
+            host=host,
+            secret=secret,
+            bot_wxid=self.settings.bot_wxid,
+            on_message=self.handle_message,
+        )
+        server.start()
+
+        # Register webhook URL with WeChatPadPro
+        # Determine the callback URL: if bot is on same host, use internal IP
+        callback_url = f"http://{host}:{port}/webhook"
+        if host == "0.0.0.0":
+            # Use the WeChatPadPro host as callback target (same machine)
+            wechatpad_host = self.settings.wechatpad_base_url.split("//")[1].split(":")[0].split("/")[0]
+            callback_url = f"http://{wechatpad_host}:{port}/webhook"
+
+        try:
+            result = self.wechat.set_webhook(
+                url=callback_url,
+                enabled=True,
+                secret=secret,
+                message_types=["sync_message"],
+                timeout=5,
+                retry_count=3,
+            )
+            self.log(f"webhook registered: url={callback_url} result={json.dumps(result, ensure_ascii=False)[:200]}")
+        except Exception as exc:
+            self.log(f"webhook registration failed: {type(exc).__name__}: {exc}")
+            self.log("falling back to poll-only mode")
+
+        return server
 
     def poll_once(self) -> int:
         payload = self.wechat.sync_messages()
@@ -151,11 +209,27 @@ class Bridge:
             self.wechat.send_text(decision.target_wxid, blocked)
             return True
 
-        send_result = self.wechat.send_text(decision.target_wxid, safe_reply)
+        text_reply, image_refs = extract_reply_media(safe_reply)
+        send_result = {"Code": 0, "Success": True, "Message": "no text reply"}
+        if text_reply:
+            send_result = self.wechat.send_text(decision.target_wxid, text_reply)
         status = "sent" if send_result.get("Success", send_result.get("Code") == 0) else "send_failed"
-        self.store.add_reply(message.dedupe_key, message.chat_id, decision.target_wxid, message.is_group, safe_reply, status, json.dumps(send_result, ensure_ascii=False)[:500])
+        image_statuses: list[str] = []
+        for image_ref in image_refs:
+            try:
+                prepared_ref = prepare_image_reference(image_ref)
+                image_result = self.wechat.send_image(decision.target_wxid, prepared_ref)
+                image_status = "image_sent" if image_result.get("Success", image_result.get("Code") == 0) else "image_send_failed"
+            except Exception as exc:
+                image_status = f"image_error:{type(exc).__name__}"
+            image_statuses.append(image_status)
+        if image_statuses and status == "sent" and any(item != "image_sent" for item in image_statuses):
+            status = "partial_sent"
+        elif image_statuses and not text_reply and all(item == "image_sent" for item in image_statuses):
+            status = "sent"
+        self.store.add_reply(message.dedupe_key, message.chat_id, decision.target_wxid, message.is_group, safe_reply, status, json.dumps({"text": send_result, "images": image_statuses}, ensure_ascii=False)[:500])
         target_handle = chat_handle if message.is_group else self.store.ensure_chat_handle(decision.target_wxid, False)
-        self.log(f"reply {status} chat={chat_handle or 'unknown_chat'} to={target_handle or 'unknown_chat'} len={len(safe_reply)}")
+        self.log(f"reply {status} chat={chat_handle or 'unknown_chat'} to={target_handle or 'unknown_chat'} len={len(text_reply)} images={len(image_refs)} image_statuses={image_statuses}")
         return True
 
     def build_context(self, message: ChatMessage, since_ts: int) -> list[dict[str, Any]]:

@@ -113,6 +113,11 @@ class Settings:
     blocked_group_chatrooms: list[str] = field(default_factory=list)
     env_file_path: Path | None = None
 
+    webhook_enabled: bool = False
+    webhook_port: int = 8070
+    webhook_host: str = "0.0.0.0"
+    webhook_secret: str = ""
+
 
 def load_settings() -> Settings:
     env_path, env_file = _load_env_file()
@@ -152,6 +157,10 @@ def load_settings() -> Settings:
         blocked_wxids=_split_csv(_env_value(env_file, "WECHATPAD_BLOCKED_WXIDS")),
         blocked_group_chatrooms=_split_csv(_env_value(env_file, "WECHATPAD_BLOCKED_GROUP_CHATROOMS")),
         env_file_path=env_path,
+        webhook_enabled=_env_bool(env_file, "WECHATPAD_WEBHOOK_ENABLED", False),
+        webhook_port=_env_int(env_file, "WECHATPAD_WEBHOOK_PORT", 8070),
+        webhook_host=_env_value(env_file, "WECHATPAD_WEBHOOK_HOST", "0.0.0.0"),
+        webhook_secret=_env_value(env_file, "WECHATPAD_WEBHOOK_SECRET", ""),
     )
 
 

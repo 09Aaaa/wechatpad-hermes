@@ -102,13 +102,13 @@ Required variables:
 
 ```bash
 WECHATPAD_BASE_URL=http://127.0.0.1:8062/api
-WECHATPAD_AUTHCODE=<bot-authcode>
+WECHATPAD_AUTHCODE=***
 WECHATPAD_DB_PATH=/opt/hermes/data/wechatpad-hermes/wechatpad-hermes.sqlite3
 WECHATPAD_POLICY_PATH=/opt/hermes/data/wechatpad-hermes/policy.yaml
 WECHATPAD_BOT_WXID=<bot-wxid>
 WECHATPAD_BOT_NAMES=BOT
 WECHATPAD_OWNER_WXIDS=<owner-private-wxid-list>
-WECHATPAD_CONTEXT_TOKEN_TTL_SECONDS=1800
+WECHATPAD_CONTEXT_TOKEN_TTL_SECONDS=***
 WECHATPAD_BLOCKED_WXIDS=
 WECHATPAD_BLOCKED_GROUP_CHATROOMS=
 ```
