@@ -16,7 +16,7 @@ if not authcode:
     exit()
 
 # 2. Call HeartBeat
-url = f"http://192.168.110.9:8062/api/Login/HeartBeat?authcode={authcode}"
+url = f"http://your_nas_ip:8062/api/Login/HeartBeat?authcode={authcode}"
 try:
     req = urllib.request.Request(url, method="POST", data=b"{}", headers={"Content-Type": "application/json"})
     resp = urllib.request.urlopen(req, timeout=10)
